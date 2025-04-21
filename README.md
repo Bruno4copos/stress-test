@@ -1,76 +1,85 @@
-# Load Tester CLI
+# Load Tester CLI em Go
 
-Uma ferramenta de linha de comando escrita em Go para realizar testes de carga (load testing) em serviços web. Permite simular um número de requisições HTTP com controle de concorrência, autenticação, envio de corpo e exportação de resultados.
+Este é um sistema CLI simples em Go para realizar testes de carga em um serviço web especificado pelo usuário. Ele permite configurar o número total de requisições e a quantidade de chamadas simultâneas para simular carga e coletar métricas básicas sobre a resposta do serviço.
 
-## 🚀 Funcionalidades
+## Funcionalidades
 
-- Testes com diferentes métodos HTTP: `GET`, `POST`, `PUT`, etc.
-- Suporte a **headers personalizados**, como tokens de autenticação.
-- Envio de **body** para requisições `POST`/`PUT`.
-- Controle de **concorrência** e número total de requisições.
-- Geração de **relatório ao final do teste**.
-- Exportação dos resultados em formato **CSV**.
+* **Entrada de Parâmetros via CLI:**
+    * `--url`: URL do serviço a ser testado (obrigatório).
+    * `--requests`: Número total de requests a serem enviados (padrão: 100).
+    * `--concurrency`: Número de chamadas simultâneas (padrão: 10).
+* **Execução de Teste de Carga:**
+    * Realiza requisições HTTP GET para a URL especificada.
+    * Controla o número de requisições simultâneas de acordo com o parâmetro `--concurrency`.
+    * Garante que o número total de requisições definido em `--requests` seja executado.
+* **Geração de Relatório:**
+    * Apresenta um relatório ao final dos testes contendo:
+        * Tempo total gasto na execução do teste.
+        * Quantidade total de requests realizados.
+        * Quantidade de requests com status HTTP 200.
+        * Distribuição de outros códigos de status HTTP encontrados.
+* **Execução via Docker:**
+    * Um `Dockerfile` está incluído para facilitar a construção de uma imagem Docker e a execução da aplicação em um container.
 
-## 🛠️ Compilação e Execução
+## Como Usar
 
-### Com Docker
+### Execução Local
 
-```bash
-docker build -t load-tester .
-docker run --rm load-tester --url=http://localhost:8080 --requests=1000 --concurrency=20
-```
+1.  **Clone o repositório (se aplicável).**
+2.  **Navegue até o diretório do projeto.**
+3.  **Compile o código Go:**
+    ```bash
+    go build -o load-tester main.go
+    ```
+4.  **Execute o load tester com os parâmetros desejados:**
+    ```bash
+    ./load-tester --url=[http://seu-servico.com](http://seu-servico.com) --requests=1000 --concurrency=50
+    ```
+    Substitua `http://seu-servico.com`, `1000` e `50` pelos valores desejados.
 
-### Localmente (Requer Go)
+### Execução com Docker
 
-```bash
-go build -o load-tester main.go
-./load-tester --url=http://localhost:8080 --requests=100 --concurrency=5
-```
+1.  **Certifique-se de ter o Docker instalado em sua máquina.**
+2.  **Navegue até o diretório do projeto onde o `Dockerfile` está localizado.**
+3.  **Construa a imagem Docker:**
+    ```bash
+    docker build -t load-tester .
+    ```
+4.  **Execute o container Docker passando os parâmetros como argumentos:**
+    ```bash
+    docker run load-tester --url=[http://google.com](http://google.com) --requests=500 --concurrency=20
+    ```
+    Adapte a URL, o número de requests e a concorrência conforme necessário.
 
-## 📥 Parâmetros disponíveis
+## Relatório de Exemplo
 
-| Flag           | Descrição                                               | Exemplo                                      |
-|----------------|---------------------------------------------------------|----------------------------------------------|
-| `--url`        | URL do serviço a ser testado                            | `--url http://localhost:8080`                |
-| `--requests`   | Total de requisições a serem feitas                     | `--requests 500`                             |
-| `--concurrency`| Número de chamadas simultâneas                          | `--concurrency 10`                           |
-| `--method`     | Método HTTP (GET, POST, PUT...)                         | `--method POST`                              |
-| `--header`     | Headers personalizados (pode ser usado múltiplas vezes) | `--header "Authorization: Bearer token"`     |
-| `--body`       | Corpo da requisição em texto (JSON, etc.)               | `--body '{"key":"value"}'`                   |
-| `--csv`        | Exportar resultados para CSV                            | `--csv results.csv`                          |
+Após a execução do teste, um relatório similar ao seguinte será exibido:
 
-## 📊 Relatório Gerado
+     ```bash
+     Iniciando teste de carga para: http://google.com
+     Total de requests: 1000
+     Concorrência: 10
+     
+     --- Relatório de Teste de Carga ---
+     Tempo total de execução: 1m3.2543876s
+     Total de requests realizados: 1000
+     Requests com status HTTP 200: 995
+     Distribuição de outros códigos de status HTTP:
+     503: 5
+	 ```
 
-Ao final do teste, será exibido:
+## Próximos Passos e Melhorias
 
-- Tempo total da execução
-- Total de requisições
-- Quantidade de respostas com status 200
-- Distribuição dos demais códigos HTTP
+Este é um projeto básico e pode ser expandido com diversas funcionalidades, como:
 
-Se usar `--csv`, será criado um arquivo contendo:
+* Suporte a diferentes métodos HTTP (POST, PUT, DELETE, etc.).
+* Envio de payloads (corpo da requisição).
+* Adição de headers personalizados.
+* Medição de latência (tempo de resposta) para cada requisição e geração de estatísticas (média, mediana, percentis).
+* Opção para definir um tempo limite para as requisições.
+* Persistência dos resultados em um arquivo (CSV, JSON, etc.).
+* Mais opções de configuração via linha de comando.
+* Métricas mais detalhadas sobre a saúde do sistema testado.
+* Implementação de estratégias de rampa de carga (aumentar gradualmente a concorrência).
 
-```csv
-Status Code,Duration (ms)
-200,12.34
-500,21.67
-...
-```
-
-## 🧪 Exemplo de uso completo
-
-```bash
-docker run --rm load-tester \
-  --url=http://localhost:8080/api \
-  --requests=1000 \
-  --concurrency=50 \
-  --method POST \
-  --header "Content-Type: application/json" \
-  --header "Authorization: Bearer abc123" \
-  --body '{"message":"hello"}' \
-  --csv report.csv
-```
-
----
-
-Criado para facilitar testes de carga em serviços web. Sinta-se à vontade para contribuir!
+Sinta-se à vontade para contribuir e adicionar melhorias a este projeto!

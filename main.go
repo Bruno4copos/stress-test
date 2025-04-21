@@ -1,174 +1,97 @@
 package main
 
 import (
-    "bytes"
-    "encoding/csv"
-    "fmt"
-    "io"
-    "log"
-    "net/http"
-    "os"
-    "strconv"
-    "strings"
-    "sync"
-    "time"
-
-    "github.com/urfave/cli/v2"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"sync"
+	"time"
 )
 
 type Result struct {
-    StatusCode int
-    Duration   time.Duration
+	StatusCode int
+	Duration   time.Duration
 }
 
 func main() {
-    app := &cli.App{
-        Name:  "Load Tester",
-        Usage: "A simple load testing CLI",
-        Flags: []cli.Flag{
-            &cli.StringFlag{Name: "url", Usage: "Target URL", Required: true},
-            &cli.IntFlag{Name: "requests", Usage: "Total number of requests", Required: true},
-            &cli.IntFlag{Name: "concurrency", Usage: "Number of concurrent requests", Required: true},
-            &cli.StringFlag{Name: "method", Usage: "HTTP method to use (GET, POST, PUT, etc.)", Value: "GET"},
-            &cli.StringSliceFlag{Name: "header", Usage: "Custom headers (key:value)"},
-            &cli.StringFlag{Name: "body", Usage: "Body for POST/PUT requests"},
-            &cli.StringFlag{Name: "csv", Usage: "Export results to CSV file (e.g., report.csv)"},
-        },
-        Action: func(c *cli.Context) error {
-            headers := parseHeaders(c.StringSlice("header"))
-            return runTest(
-                c.String("url"),
-                c.Int("requests"),
-                c.Int("concurrency"),
-                c.String("method"),
-                headers,
-                c.String("body"),
-                c.String("csv"),
-            )
-        },
-    }
+	urlPtr := flag.String("url", "", "URL do serviço a ser testado (obrigatório)")
+	requestsPtr := flag.Int("requests", 100, "Número total de requests a serem enviados")
+	concurrencyPtr := flag.Int("concurrency", 10, "Número de chamadas simultâneas")
 
-    if err := app.Run(os.Args); err != nil {
-        log.Fatal(err)
-    }
-}
+	flag.Parse()
 
-func parseHeaders(raw []string) map[string]string {
-    headers := make(map[string]string)
-    for _, h := range raw {
-        parts := strings.SplitN(h, ":", 2)
-        if len(parts) == 2 {
-            headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
-        }
-    }
-    return headers
-}
+	if *urlPtr == "" {
+		fmt.Println("Erro: O parâmetro --url é obrigatório.")
+		os.Exit(1)
+	}
 
-func runTest(url string, totalRequests, concurrency int, method string, headers map[string]string, body, csvFile string) error {
-    var wg sync.WaitGroup
-    var mu sync.Mutex
-    var results []Result
-    statusCodes := make(map[int]int)
-    successCount := 0
-    client := &http.Client{}
+	url := *urlPtr
+	totalRequests := *requestsPtr
+	concurrency := *concurrencyPtr
 
-    startTime := time.Now()
-    requestsPerWorker := totalRequests / concurrency
-    remainder := totalRequests % concurrency
+	fmt.Printf("Iniciando teste de carga para: %s\n", url)
+	fmt.Printf("Total de requests: %d\n", totalRequests)
+	fmt.Printf("Concorrência: %d\n", concurrency)
 
-    for i := 0; i < concurrency; i++ {
-        reqs := requestsPerWorker
-        if i < remainder {
-            reqs++
-        }
+	startTime := time.Now()
+	results := make(chan Result, totalRequests)
+	var wg sync.WaitGroup
 
-        wg.Add(1)
-        go func(n int) {
-            defer wg.Done()
-            for j := 0; j < n; j++ {
-                var reqBody io.Reader
-                if body != "" {
-                    reqBody = bytes.NewBufferString(body)
-                }
+	// Controla o número de goroutines simultâneas
+	semaphore := make(chan struct{}, concurrency)
 
-                req, err := http.NewRequest(method, url, reqBody)
-                if err != nil {
-                    log.Printf("Failed to create request: %v", err)
-                    continue
-                }
+	for i := 0; i < totalRequests; i++ {
+		wg.Add(1)
+		semaphore <- struct{}{} // Adquire um slot do semáforo
+		go func() {
+			defer func() {
+				<-semaphore // Libera o slot do semáforo
+				wg.Done()
+			}()
 
-                for k, v := range headers {
-                    req.Header.Set(k, v)
-                }
+			start := time.Now()
+			resp, err := http.Get(url)
+			duration := time.Since(start)
 
-                reqStart := time.Now()
-                resp, err := client.Do(req)
-                reqDuration := time.Since(reqStart)
+			if err != nil {
+				fmt.Printf("Erro ao fazer request para %s: %v\n", url, err)
+				results <- Result{StatusCode: 0, Duration: duration} // Código 0 para erro
+				return
+			}
+			defer resp.Body.Close()
+			_, _ = io.ReadAll(resp.Body) // Consome o body para liberar a conexão
 
-                if err != nil {
-                    log.Printf("Request failed: %v", err)
-                    continue
-                }
+			results <- Result{StatusCode: resp.StatusCode, Duration: duration}
+		}()
+	}
 
-                mu.Lock()
-                statusCodes[resp.StatusCode]++
-                if resp.StatusCode == 200 {
-                    successCount++
-                }
-                results = append(results, Result{StatusCode: resp.StatusCode, Duration: reqDuration})
-                mu.Unlock()
-                resp.Body.Close()
-            }
-        }(reqs)
-    }
+	wg.Wait()
+	close(results)
+	endTime := time.Now()
+	totalTime := endTime.Sub(startTime)
 
-    wg.Wait()
-    duration := time.Since(startTime)
+	fmt.Println("\n--- Relatório de Teste de Carga ---")
+	fmt.Printf("Tempo total de execução: %s\n", totalTime)
 
-    fmt.Println("
---- Load Test Report ---")
-    fmt.Printf("Total time taken: %v
-", duration)
-    fmt.Printf("Total requests: %d
-", totalRequests)
-    fmt.Printf("Successful (200) responses: %d
-", successCount)
-    fmt.Println("Other status codes:")
-    for code, count := range statusCodes {
-        if code != 200 {
-            fmt.Printf("  %d: %d
-", code, count)
-        }
-    }
+	statusCodeCounts := make(map[int]int)
+	totalSuccess := 0
 
-    if csvFile != "" {
-        err := exportCSV(results, csvFile)
-        if err != nil {
-            return fmt.Errorf("failed to export CSV: %v", err)
-        }
-        fmt.Printf("Results exported to %s
-", csvFile)
-    }
+	for result := range results {
+		statusCodeCounts[result.StatusCode]++
+		if result.StatusCode >= 200 && result.StatusCode < 300 {
+			totalSuccess++
+		}
+	}
 
-    return nil
-}
+	fmt.Printf("Total de requests realizados: %d\n", totalRequests)
+	fmt.Printf("Requests com status HTTP 200: %d\n", totalSuccess)
 
-func exportCSV(results []Result, filename string) error {
-    file, err := os.Create(filename)
-    if err != nil {
-        return err
-    }
-    defer file.Close()
-
-    writer := csv.NewWriter(file)
-    defer writer.Flush()
-
-    writer.Write([]string{"Status Code", "Duration (ms)"})
-    for _, r := range results {
-        writer.Write([]string{
-            strconv.Itoa(r.StatusCode),
-            fmt.Sprintf("%.2f", r.Duration.Seconds()*1000),
-        })
-    }
-    return nil
+	fmt.Println("Distribuição de outros códigos de status HTTP:")
+	for code, count := range statusCodeCounts {
+		if code != 200 && (code < 200 || code >= 300) {
+			fmt.Printf("  %d - %s: %d\n", code, http.StatusText(code), count)
+		}
+	}
 }
